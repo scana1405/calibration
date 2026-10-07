@@ -1,17 +1,20 @@
-import { useEffect, useLayoutEffect, useRef, type PointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, type PointerEvent, type RefObject } from 'react';
 import { drawScene, type Scene } from './draw';
 import type { Point, Size } from './geometry';
 
 interface CanvasStageProps {
-  /** Null until the first measurement has been reported. */
+  /** Null until the first measurement, or while the caller draws directly (gaze playback). */
   scene: Scene | null;
   onResize: (canvas: Size, devicePixelRatio: number) => void;
   draggable: boolean;
   onDrag: (point: Point) => void;
+  hideCursor?: boolean;
+  /** Receives the canvas element for callers that draw every frame themselves. */
+  canvasRef?: RefObject<HTMLCanvasElement | null>;
 }
 
 /** Full-screen canvas sized in physical device pixels. */
-export function CanvasStage({ scene, onResize, draggable, onDrag }: CanvasStageProps) {
+export function CanvasStage({ scene, onResize, draggable, onDrag, hideCursor, canvasRef: externalRef }: CanvasStageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const draggingRef = useRef(false);
   const onResizeRef = useRef(onResize);
@@ -71,9 +74,12 @@ export function CanvasStage({ scene, onResize, draggable, onDrag }: CanvasStageP
 
   return (
     <canvas
-      ref={canvasRef}
+      ref={(el) => {
+        canvasRef.current = el;
+        if (externalRef) externalRef.current = el;
+      }}
       className="stage"
-      style={{ cursor: draggable ? 'crosshair' : 'default' }}
+      style={{ cursor: hideCursor ? 'none' : draggable ? 'crosshair' : 'default' }}
       onPointerDown={(e) => {
         if (!draggable || e.button !== 0) return;
         draggingRef.current = true;

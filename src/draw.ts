@@ -1,6 +1,14 @@
 import { frameOrigin, frameSize, type Point, type Scale, type Size, type Target } from './geometry';
 
-export type Mode = 'scale' | 'center' | 'verify';
+export type Mode = 'scale' | 'center' | 'verify' | 'gaze';
+
+/** What the gaze test shows: at most one target, nothing else the patient could follow. */
+export interface GazeView {
+  target: Point | null;
+  /** Countdown number drawn above the target, or null. */
+  countdown: number | null;
+  paused: boolean;
+}
 
 export interface Scene {
   mode: Mode;
@@ -12,6 +20,7 @@ export interface Scene {
   targets: Target[] | null;
   dotDiameterPx: number;
   labelsVisible: boolean;
+  gaze?: GazeView;
 }
 
 const BACKGROUND = '#000';
@@ -135,6 +144,35 @@ function drawTargets(ctx: CanvasRenderingContext2D, scene: Scene, targets: Targe
   }
 }
 
+function drawDot(ctx: CanvasRenderingContext2D, point: Point, diameterPx: number): void {
+  ctx.fillStyle = DOT;
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, diameterPx / 2, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawGaze(ctx: CanvasRenderingContext2D, scene: Scene, gaze: GazeView): void {
+  const { canvas } = scene;
+  if (gaze.target) drawDot(ctx, gaze.target, scene.dotDiameterPx);
+
+  if (gaze.countdown !== null && gaze.target) {
+    const size = Math.round(canvas.height * 0.12);
+    ctx.font = `${size}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+    ctx.fillStyle = LABEL;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(String(gaze.countdown), gaze.target.x, Math.max(size, gaze.target.y - size * 0.5));
+  }
+
+  if (gaze.paused) {
+    setFont(ctx, canvas);
+    ctx.fillStyle = LABEL;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('Duraklatıldı', canvas.width / 2, canvas.height - Math.round(canvas.height * 0.03));
+  }
+}
+
 function drawMessage(ctx: CanvasRenderingContext2D, canvas: Size, text: string): void {
   setFont(ctx, canvas);
   ctx.fillStyle = LABEL;
@@ -159,6 +197,9 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene): void {
       drawCross(ctx, scene);
       if (scene.targets) drawTargets(ctx, scene, scene.targets);
       else drawMessage(ctx, canvas, 'Önce ölçeği gir');
+      break;
+    case 'gaze':
+      if (scene.gaze) drawGaze(ctx, scene, scene.gaze);
       break;
   }
 }

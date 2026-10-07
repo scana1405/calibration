@@ -73,6 +73,67 @@ button:hover {
   align-self: flex-start;
 }
 
+.primary {
+  margin-top: 12px;
+  background: #e6e6e6;
+  color: #111;
+  border-color: #e6e6e6;
+  font-weight: 600;
+}
+
+.primary:hover {
+  background: #fff;
+}
+
+.buttons .primary {
+  margin-top: 0;
+}
+
+button:disabled,
+button:disabled:hover {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: #333;
+  color: inherit;
+  border-color: #4a4a4a;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #ccc;
+}
+
+.phase-list {
+  margin: 4px 0 0;
+  padding: 0 0 0 22px;
+  color: #ccc;
+  font-variant-numeric: tabular-nums;
+}
+
+.phase-list li span {
+  display: inline-block;
+}
+
+.phase-list li span:first-child {
+  width: 160px;
+}
+
+.phase-list li span:nth-child(2) {
+  width: 56px;
+  text-align: right;
+  margin-right: 12px;
+}
+
 .field {
   display: flex;
   flex-direction: column;

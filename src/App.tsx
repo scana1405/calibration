@@ -1,6 +1,21 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CanvasStage } from './CanvasStage';
 import type { Mode, Scene } from './draw';
+import { GazePanel, type GazePrep } from './GazePanel';
+import { gazeRecordFilename } from './gazeRunner';
+import {
+  buildGazeSequence,
+  loadGazeSettings,
+  PHASE_LABEL_NAMES,
+  phasesOutsideCanvas,
+  placeSequence,
+  saveGazeSettings,
+  SETTING_RANGES,
+  validateGazeSettings,
+  type GazeSettings,
+  type NumericSettingKey,
+} from './gazeSequence';
+import { useGazeTest } from './useGazeTest';
 import {
   canvasCenter,
   cardinalTargets,
@@ -22,6 +37,7 @@ import {
 } from './geometry';
 import { Panel } from './Panel';
 import {
+  downloadJson,
   downloadProfile,
   loadProfile,
   parseProfile,
@@ -90,7 +106,26 @@ export const DIRECTION_NAMES: Record<Direction, string> = {
   down: 'Aşağı',
 };
 
-const MODES: Record<string, Mode> = { '1': 'scale', '2': 'center', '3': 'verify' };
+const MODES: Record<string, Mode> = { '1': 'scale', '2': 'center', '3': 'verify', '4': 'gaze' };
+
+export type GazeSettingInputs = Record<NumericSettingKey, string>;
+
+function gazeInputsFromSettings(settings: GazeSettings): GazeSettingInputs {
+  const keys = Object.keys(SETTING_RANGES) as NumericSettingKey[];
+  return Object.fromEntries(keys.map((k) => [k, String(settings[k])])) as GazeSettingInputs;
+}
+
+function parseGazeInputs(inputs: GazeSettingInputs, beepOnChange: boolean) {
+  const keys = Object.keys(SETTING_RANGES) as NumericSettingKey[];
+  const values = Object.fromEntries(keys.map((k) => [k, parseDecimal(inputs[k])])) as Record<
+    NumericSettingKey,
+    number | null
+  >;
+  const errors = validateGazeSettings(values);
+  const settings: GazeSettings | null =
+    Object.keys(errors).length === 0 ? { ...(values as Record<NumericSettingKey, number>), beepOnChange } : null;
+  return { settings, errors };
+}
 
 function inputsFromProfile(p: CalibrationProfile): Inputs {
   const str = (v: number | null) => (v === null ? '' : String(v));
@@ -256,11 +291,29 @@ export default function App() {
   const [status, setStatus] = useState<Status | null>(() =>
     initialProfile ? { kind: 'ok', text: 'Kayıtlı profil yüklendi.' } : null,
   );
+  const [initialGazeSettings] = useState(loadGazeSettings);
+  const [gazeInputs, setGazeInputs] = useState(() => gazeInputsFromSettings(initialGazeSettings));
+  const [beepOnChange, setBeepOnChange] = useState(initialGazeSettings.beepOnChange);
+  const [isFullscreen, setIsFullscreen] = useState(() => document.fullscreenElement !== null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const gaze = useGazeTest(canvasRef, canvas);
 
   const derived = useMemo(
     () => derive(inputs, canvas, devicePixelRatio, basis, centerState),
     [inputs, canvas, devicePixelRatio, basis, centerState],
   );
+
+  const gazeSettings = useMemo(() => parseGazeInputs(gazeInputs, beepOnChange), [gazeInputs, beepOnChange]);
+
+  useEffect(() => {
+    if (gazeSettings.settings) saveGazeSettings(gazeSettings.settings);
+  }, [gazeSettings]);
+
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(document.fullscreenElement !== null);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
 
   const handleResize = useCallback((size: Size, dpr: number) => {
     setCanvas((prev) => (prev && prev.width === size.width && prev.height === size.height ? prev : size));
@@ -341,6 +394,55 @@ export default function App() {
     setStatus({ kind: 'ok', text: 'Profil içe aktarıldı ve kaydedildi.' });
   };
 
+  // The gaze test uses the calibration currently on screen, saved or not.
+  const currentProfile = useMemo(buildProfile, [inputs, derived, canvas, devicePixelRatio]);
+
+  const gazePrep = useMemo<GazePrep>(() => {
+    const reasons: string[] = [];
+    const { settings } = gazeSettings;
+    const { scale } = derived;
+    if (!currentProfile || !scale || !canvas) {
+      reasons.push('Önce kalibrasyonu tamamla: ölçek, mesafe ve açılar geçerli olmalı.');
+    }
+    if (!settings) reasons.push('Süre ayarlarını düzelt.');
+
+    let phases = null;
+    if (currentProfile && scale && canvas && settings) {
+      phases = placeSequence(
+        buildGazeSequence(settings, currentProfile.anglesDeg),
+        currentProfile.centerPx,
+        currentProfile.eyeDistanceCm,
+        scale,
+      );
+      const outside = [
+        ...new Set(phasesOutsideCanvas(phases, canvas, currentProfile.eyeDistanceCm, scale).map((p) => p.label)),
+      ];
+      if (outside.length > 0) {
+        const names = outside.map((l) => PHASE_LABEL_NAMES[l]).join(', ');
+        reasons.push(`${names} hedef ekran dışında kalıyor: merkezi ya da açıyı değiştir.`);
+      }
+    }
+    if (!isFullscreen) reasons.push('Tam ekrana geç (F). Kalibrasyon ve test tam ekranda yapılmalı.');
+    return { profile: currentProfile, phases, reasons };
+  }, [currentProfile, gazeSettings, derived, canvas, isFullscreen]);
+
+  const resetGaze = gaze.reset;
+  const enterGaze = useCallback(() => {
+    resetGaze();
+    setMode('gaze');
+  }, [resetGaze]);
+
+  const startGaze = () => {
+    const { profile, phases, reasons } = gazePrep;
+    const settings = gazeSettings.settings;
+    if (reasons.length > 0 || !profile || !phases || !settings || !scene) return;
+    gaze.start({ profile, settings, phases, scene: { ...scene, mode: 'gaze', gaze: undefined } });
+  };
+
+  const downloadGazeRecord = () => {
+    if (gaze.result) downloadJson(gaze.result, gazeRecordFilename(new Date(gaze.result.startedAtEpochMs)));
+  };
+
   const moveCenter = useCallback(
     (dx: number, dy: number) => {
       if (!canvas) return;
@@ -354,6 +456,8 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // During the test only Space and Esc work; useGazeTest handles them.
+      if (gaze.playing) return;
       if (isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
       const step = e.shiftKey ? 10 : 1;
       const arrows: Record<string, [number, number]> = {
@@ -363,13 +467,14 @@ export default function App() {
         ArrowDown: [0, step],
       };
       if (e.key in arrows) {
-        if (mode === 'scale') return;
+        if (mode === 'scale' || mode === 'gaze') return;
         e.preventDefault();
         moveCenter(...arrows[e.key]);
         return;
       }
       if (e.key in MODES) {
-        setMode(MODES[e.key]);
+        if (MODES[e.key] === 'gaze') enterGaze();
+        else setMode(MODES[e.key]);
         return;
       }
       switch (e.key.toLowerCase()) {
@@ -380,7 +485,7 @@ export default function App() {
           setPanelVisible((v) => !v);
           break;
         case 'r':
-          setCenterState(null);
+          if (mode !== 'gaze') setCenterState(null);
           break;
         case 'h':
           if (mode === 'verify') setLabelsVisible((v) => !v);
@@ -389,7 +494,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [mode, moveCenter]);
+  }, [mode, moveCenter, gaze.playing, enterGaze]);
 
   const scene = useMemo<Scene | null>(() => {
     if (!derived.canvas || !derived.center) return null;
@@ -405,19 +510,48 @@ export default function App() {
           ? dotDiameterPx(derived.distanceCm, derived.scale.x)
           : MIN_DOT_DIAMETER_PX,
       labelsVisible,
+      // Gaze preparation shows only the centre target; the finish screen shows nothing.
+      gaze:
+        mode === 'gaze'
+          ? { target: gaze.stage === 'prep' ? derived.center : null, countdown: null, paused: false }
+          : undefined,
     };
-  }, [mode, derived, devicePixelRatio, labelsVisible]);
+  }, [mode, derived, devicePixelRatio, labelsVisible, gaze.stage]);
 
   return (
     <>
       <CanvasStage
-        scene={scene}
+        canvasRef={canvasRef}
+        // While the test plays, useGazeTest draws every frame itself.
+        scene={gaze.playing ? null : scene}
         onResize={handleResize}
         draggable={mode === 'center'}
         onDrag={(p) => canvas && setCenterState(clampToCanvas(p, canvas))}
+        hideCursor={gaze.playing}
       />
-      {panelVisible && (
+      {panelVisible && mode === 'gaze' && !gaze.playing && (
+        <GazePanel
+          stage={gaze.stage}
+          prep={gazePrep}
+          inputs={gazeInputs}
+          errors={gazeSettings.errors}
+          onInputChange={(key, value) => setGazeInputs((prev) => ({ ...prev, [key]: value }))}
+          beepOnChange={beepOnChange}
+          onBeepChange={setBeepOnChange}
+          warnings={derived.warnings.filter((w) => w.level === 'warn')}
+          notice={gaze.notice}
+          result={gaze.result}
+          onStart={startGaze}
+          onDownload={downloadGazeRecord}
+          onBack={() => {
+            gaze.reset();
+            setMode('verify');
+          }}
+        />
+      )}
+      {panelVisible && mode !== 'gaze' && (
         <Panel
+          onStartGaze={enterGaze}
           mode={mode}
           onModeChange={setMode}
           inputs={inputs}

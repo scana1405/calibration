@@ -13,6 +13,7 @@ interface PanelProps {
   onExport: () => void;
   onImport: (text: string) => void;
   onResetCenter: () => void;
+  onStartGaze: () => void;
 }
 
 const MODE_TABS: [Mode, string][] = [
@@ -62,6 +63,11 @@ export function Panel(props: PanelProps) {
       {mode === 'scale' && <ScaleSection field={field} derived={derived} />}
       {mode === 'center' && <CenterSection derived={derived} onResetCenter={props.onResetCenter} />}
       {mode === 'verify' && <VerifySection field={field} derived={derived} />}
+      {mode === 'verify' && (
+        <button className="primary" onClick={props.onStartGaze}>
+          Gaze testine geç (4)
+        </button>
+      )}
 
       {derived.warnings.length > 0 && (
         <ul className="warnings">
@@ -92,7 +98,7 @@ export function Panel(props: PanelProps) {
       {status && <p className={`status ${status.kind}`}>{status.text}</p>}
 
       <p className="shortcuts">
-        1/2/3 mod · F tam ekran · P panel · Oklar merkez (Shift ×10) · R merkezi sıfırla · H etiketler
+        1/2/3 mod · 4 gaze testi · F tam ekran · P panel · Oklar merkez (Shift ×10) · R merkezi sıfırla · H etiketler
       </p>
     </aside>
   );

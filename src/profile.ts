@@ -105,12 +105,16 @@ export function exportFilename(date: Date): string {
   return `vng-kalibrasyon-${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}.json`;
 }
 
-export function downloadProfile(profile: CalibrationProfile): void {
-  const blob = new Blob([JSON.stringify(profile, null, 2)], { type: 'application/json' });
+export function downloadJson(data: unknown, filename: string): void {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = exportFilename(new Date());
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+export function downloadProfile(profile: CalibrationProfile): void {
+  downloadJson(profile, exportFilename(new Date()));
 }
