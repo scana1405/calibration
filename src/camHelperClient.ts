@@ -53,7 +53,7 @@ export interface EyeCalPoint {
   targetDeg: { h: number; v: number };
   validFraction: number;
   measuredDeg: { h: number; v: number } | null;
-  /** Pass/fail error: fitted axis for eccentric points, 2D at the centre. */
+  /** Pass/fail error after drift correction: fitted axis for eccentric points, 2D at the centre. */
   residualDeg: number | null;
   /** Diagnostic only: vertical at right/left, horizontal at up/down. */
   offAxisDeg?: number | null;
@@ -61,8 +61,17 @@ export interface EyeCalPoint {
   reason?: string;
 }
 
+/** Pupil drift during the calibration, from the centre fixations (offsets from the last one). */
+export interface EyeCalDrift {
+  applied: boolean;
+  spanMs: number;
+  totalDeg: { h: number; v: number };
+  centres: { index: number; atMs: number; offsetDeg: { h: number; v: number } }[] | null;
+}
+
 export interface EyeCalibrationResult {
   quality: 'good' | 'repeat';
+  drift?: EyeCalDrift;
   reasons?: string[];
   maxResidualDeg: number | null;
   centerSpreadDeg: number | null;

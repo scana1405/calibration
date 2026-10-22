@@ -203,6 +203,17 @@ function deg(v: number | null | undefined, digits = 1): string {
   return v === null || v === undefined ? '–' : `${v.toFixed(digits)}°`;
 }
 
+function signedDeg(v: number): string {
+  return `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}°`;
+}
+
+/** A centre fixation's offset from the last one (h/v), from the drift estimate. */
+function centreOffset(cal: EyeCalibrationResult, index: number): string {
+  const c = cal.drift?.centres?.find((x) => x.index === index);
+  if (!c) return '';
+  return `${c.offsetDeg.h.toFixed(1)}/${c.offsetDeg.v.toFixed(1)}`;
+}
+
 /** Fit result of an eye calibration run: good or repeat, then per point. */
 function EyecalResultSection({ outcome }: { outcome: CamHelperLink['eyecal'] }) {
   if (!outcome || outcome.state === 'unreachable') {
@@ -237,14 +248,22 @@ function EyecalResultSection({ outcome }: { outcome: CamHelperLink['eyecal'] }) 
         <dd>
           {deg(cal.maxResidualDeg, 2)} (≤ {t.max_point_residual_deg}°)
         </dd>
-        <dt>Merkez yayılımı</dt>
+        <dt>Merkez yayılımı (düzeltmesiz)</dt>
         <dd>
           {deg(cal.centerSpreadDeg, 2)} (≤ {t.max_center_spread_deg}°)
         </dd>
-        <dt>Asimetri sağ/sol · yukarı/aşağı</dt>
+        {cal.drift?.applied && (
+          <>
+            <dt>Kayma ({Math.round(cal.drift.spanMs / 1000)} s, düzeltildi)</dt>
+            <dd>
+              yatay {signedDeg(cal.drift.totalDeg.h)} · dikey {signedDeg(cal.drift.totalDeg.v)}
+            </dd>
+          </>
+        )}
+        <dt>Asimetri sağ/sol · yukarı/aşağı (tanı)</dt>
         <dd>
           {cal.asymmetryH === null ? '–' : `%${Math.round(cal.asymmetryH * 100)}`} ·{' '}
-          {cal.asymmetryV === null ? '–' : `%${Math.round(cal.asymmetryV * 100)}`} (≤ %{Math.round(t.max_asymmetry * 100)})
+          {cal.asymmetryV === null ? '–' : `%${Math.round(cal.asymmetryV * 100)}`}
         </dd>
       </dl>
       <table className="points">
@@ -254,8 +273,8 @@ function EyecalResultSection({ outcome }: { outcome: CamHelperLink['eyecal'] }) 
             <th>Hedef</th>
             <th>Geçerli</th>
             <th>Hata</th>
-            <th title="Tanı amaçlı, geçme koşulu değil: sağ/sol noktada dikey, yukarı/aşağı noktada yatay ölçülen açı">
-              Eksen dışı
+            <th title="Tanı amaçlı, geçme koşulu değil: sağ/sol noktada dikey, yukarı/aşağı noktada yatay ölçülen açı; merkezde son merkeze göre kayma (yatay/dikey)">
+              Eksen dışı / kayma
             </th>
           </tr>
         </thead>
@@ -268,7 +287,9 @@ function EyecalResultSection({ outcome }: { outcome: CamHelperLink['eyecal'] }) 
               </td>
               <td>%{Math.round(p.validFraction * 100)}</td>
               <td title={p.reason}>{p.ok ? deg(p.residualDeg, 2) : 'yok'}</td>
-              <td title={AXIS_NAMES[p.axis]}>{p.offAxisDeg === undefined ? '' : deg(p.offAxisDeg, 2)}</td>
+              <td title={AXIS_NAMES[p.axis]}>
+                {p.axis === 'center' ? centreOffset(cal, p.index) : p.offAxisDeg === undefined ? '' : deg(p.offAxisDeg, 2)}
+              </td>
             </tr>
           ))}
         </tbody>

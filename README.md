@@ -185,7 +185,9 @@ Gaze paneli üstündeki `Göz kalibrasyonu` sekmesi, cam-helper'ın göz takibi 
 | Aşağı | 3 |
 | Merkez | 3 |
 
-cam-helper her fazın başından 700 ms sonrasından fazın sonuna kadar geçerli karelerin ortanca pupil konumunu alır ve eksen başına `x = x0 + Rx · sin(θ)` modelini oturtur. Bitiş ekranı sonucu gösterir: **iyi** ya da **tekrarla**, nokta başına hata (derece), merkez yayılımı ve sağ/sol, yukarı/aşağı asimetrisi. "Eksen dışı" sütunu yalnızca tanı içindir (sağ/sol noktada dikey, yukarı/aşağı noktada yatay sapma; kameranın dönük olduğunu gösterir), geçme koşulu değildir. Sonuç `tekrarla` ise önceki kalibrasyon da kullanılmaz.
+cam-helper her fazın başından 700 ms sonrasından fazın sonuna kadar geçerli karelerin ortanca pupil konumunu alır. Modelde her yönün kendi kazancı vardır (`x = x0 + Rx_sağ · sin(θ)` sağa, `Rx_sol` sola; dikeyde `Ry_yukarı`, `Ry_aşağı`): izlenen göz merkez hedefin tam karşısında olmadığında da hedefler doğru okunur. Merkez beş kez gösterildiği için pupilin yavaş kayması (gözlük kayması) merkez ortancalarından zamana göre doğrusal olarak hesaplanır ve oturtmadan önce her noktadan çıkarılır; noktalar son merkeze göre düzeltilir.
+
+Bitiş ekranı sonucu gösterir: **iyi** ya da **tekrarla**, nokta başına hata (düzeltmeden sonra; her yönde tek nokta olduğundan sıfıra yakındır), düzeltmesiz merkez yayılımı (büyük kayma yine başarısız sayılır), hesaplanan kayma ve sağ/sol, yukarı/aşağı asimetrisi (yalnızca tanı). "Eksen dışı / kayma" sütunu sağ/sol noktada dikey, yukarı/aşağı noktada yatay sapmayı (kameranın dönük olduğunu gösterir), merkez noktalarında da son merkeze göre kaymayı gösterir; geçme koşulu değildir. Sonuç `tekrarla` ise önceki kalibrasyon da kullanılmaz.
 
 Gaze testinin hazırlık ekranı, cam-helper bağlıyken geçerli bir göz kalibrasyonu yoksa ya da kalibrasyon bu sayfa açılmadan önce yapıldıysa "Önce göz kalibrasyonu yap" uyarısı gösterir; test yine de başlatılabilir. Kamera kayıt dışı bir nedenle yeniden başlarsa (gözlük ya da cihaz değişmiş olabilir) cam-helper kalibrasyonu geçersiz sayar.
 
