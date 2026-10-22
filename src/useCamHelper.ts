@@ -2,7 +2,12 @@
 // session events. The runner talks to it through GazeLink only.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CamHelperClient, loadCamHelperUrl, type CamHelperStatus } from './camHelperClient';
+import {
+  CamHelperClient,
+  loadCamHelperUrl,
+  type CamHelperStatus,
+  type EyeCalibrationResult,
+} from './camHelperClient';
 import type { GazeRecord, PhaseRecord } from './gazeRunner';
 import type { PlacedPhase, TestProtocol } from './gazeSequence';
 import type { CalibrationProfile } from './profile';
@@ -10,6 +15,14 @@ import type { CalibrationProfile } from './profile';
 export const STATUS_POLL_MS = 2000;
 /** Faster polling while a countdown may be waiting for cam-helper. */
 export const COUNTDOWN_POLL_MS = 250;
+/** eyecal/end waits for the last frames and fits: allow longer than other calls. */
+export const EYECAL_END_TIMEOUT_MS = 8000;
+
+/** Result of the last eye calibration run, for the done screen. */
+export type EyecalOutcome =
+  | { state: 'pending' }
+  | { state: 'done'; calibration: EyeCalibrationResult | null }
+  | { state: 'unreachable' };
 
 /** What the test runner reports; every method returns at once and never throws. */
 export interface GazeLink {
@@ -28,6 +41,8 @@ export interface CamHelperLink extends GazeLink {
   status: CamHelperStatus | null;
   /** Folder and recording state of the last session, from cam-helper. */
   lastSession: { dir: string; recording: string; reason?: string } | null;
+  /** Outcome of the last eye calibration run (null before any). */
+  eyecal: EyecalOutcome | null;
 }
 
 type StartState = 'none' | 'pending' | 'ok' | 'failed';
@@ -42,6 +57,8 @@ export function useCamHelper(pollWhileIdle: boolean, client?: CamHelperClient): 
   const clientRef = useRef<CamHelperClient>(client ?? new CamHelperClient(loadCamHelperUrl()));
   const [status, setStatus] = useState<CamHelperStatus | null>(null);
   const [lastSession, setLastSession] = useState<CamHelperLink['lastSession']>(null);
+  const [eyecal, setEyecal] = useState<EyecalOutcome | null>(null);
+  const testRef = useRef<TestProtocol | null>(null);
   const statusRef = useRef<CamHelperStatus | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const startStateRef = useRef<StartState>('none');
@@ -76,16 +93,25 @@ export function useCamHelper(pollWhileIdle: boolean, client?: CamHelperClient): 
     (run) => {
       const id = newSessionId();
       sessionIdRef.current = id;
+      testRef.current = run.test;
       startStateRef.current = 'pending';
       inCountdownRef.current = true;
-      void clientRef.current
-        .post<{ dir: string; recording: string; recordingReason?: string }>('/v1/session/start', {
-          sessionId: id,
-          test: run.test,
-          settings: run.settings,
-          profile: run.profile,
-          plannedPhases: run.phases,
-        })
+      if (run.test === 'eyecal') setEyecal(null);
+      const request =
+        run.test === 'eyecal'
+          ? clientRef.current.post<{ dir: string; recording: string; recordingReason?: string }>('/v1/eyecal/start', {
+              sessionId: id,
+              profile: run.profile,
+              points: run.phases.map((p) => ({ label: p.label, angleDeg: p.angleDeg })),
+            })
+          : clientRef.current.post<{ dir: string; recording: string; recordingReason?: string }>('/v1/session/start', {
+              sessionId: id,
+              test: run.test,
+              settings: run.settings,
+              profile: run.profile,
+              plannedPhases: run.phases,
+            });
+      void request
         .then((res) => {
           if (sessionIdRef.current !== id) return;
           startStateRef.current = res ? 'ok' : 'failed';
@@ -128,11 +154,34 @@ export function useCamHelper(pollWhileIdle: boolean, client?: CamHelperClient): 
   const sessionEnd = useCallback<GazeLink['sessionEnd']>(
     (record, completed) => {
       const sessionId = sessionIdRef.current;
+      const started = startStateRef.current;
       sessionIdRef.current = null;
       startStateRef.current = 'none';
       inCountdownRef.current = false;
       stopFastPoll();
       if (!sessionId) return;
+      if (testRef.current === 'eyecal') {
+        if (!record) {
+          void clientRef.current.post('/v1/eyecal/end', { sessionId, completed: false, record: null }).then(() => poll());
+          return;
+        }
+        if (started === 'failed') {
+          setEyecal({ state: 'unreachable' });
+          return;
+        }
+        setEyecal({ state: 'pending' });
+        void clientRef.current
+          .post<{ completed: boolean; calibration: EyeCalibrationResult | null }>(
+            '/v1/eyecal/end',
+            { sessionId, completed, record },
+            { timeoutMs: EYECAL_END_TIMEOUT_MS },
+          )
+          .then((res) => {
+            setEyecal(res ? { state: 'done', calibration: res.calibration } : { state: 'unreachable' });
+            void poll();
+          });
+        return;
+      }
       void clientRef.current.post('/v1/session/end', { sessionId, completed, record }).then(() => poll());
     },
     [poll],
@@ -155,7 +204,7 @@ export function useCamHelper(pollWhileIdle: boolean, client?: CamHelperClient): 
   }, []);
 
   return useMemo(
-    () => ({ status, lastSession, sessionStart, phase, pause, resume, sessionEnd, holdCountdown }),
-    [status, lastSession, sessionStart, phase, pause, resume, sessionEnd, holdCountdown],
+    () => ({ status, lastSession, eyecal, sessionStart, phase, pause, resume, sessionEnd, holdCountdown }),
+    [status, lastSession, eyecal, sessionStart, phase, pause, resume, sessionEnd, holdCountdown],
   );
 }

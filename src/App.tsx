@@ -5,6 +5,7 @@ import { GazePanel, type GazePrep } from './GazePanel';
 import { gazeRecordFilename } from './gazeRunner';
 import {
   buildCheckSequence,
+  buildEyecalSequence,
   buildGazeSequence,
   loadGazeSettings,
   PHASE_LABEL_NAMES,
@@ -424,7 +425,9 @@ export default function App() {
       const sequence =
         protocol === 'gaze'
           ? buildGazeSequence(settings as GazeSettings, currentProfile.anglesDeg)
-          : buildCheckSequence(currentProfile.anglesDeg);
+          : protocol === 'eyecal'
+            ? buildEyecalSequence(currentProfile.anglesDeg)
+            : buildCheckSequence(currentProfile.anglesDeg);
       phases = placeSequence(
         sequence,
         currentProfile.centerPx,

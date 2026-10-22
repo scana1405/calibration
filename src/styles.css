@@ -257,3 +257,32 @@ button:disabled:hover {
   font-size: 11px;
   word-break: break-all;
 }
+
+.points {
+  width: 100%;
+  margin-top: 10px;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.points th,
+.points td {
+  padding: 3px 4px;
+  text-align: right;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.points th:first-child,
+.points td:first-child {
+  text-align: left;
+}
+
+.points th {
+  color: #aaa;
+  font-weight: normal;
+}
+
+.points tr.bad td {
+  color: #f28b82;
+}

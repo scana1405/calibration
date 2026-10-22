@@ -22,6 +22,43 @@ export interface CamHelperSession {
   trackingReady: boolean;
 }
 
+export interface EyeCalibrationStatus {
+  available: boolean;
+  createdAtEpochMs: number;
+  quality: 'good' | 'repeat';
+  maxResidualDeg: number | null;
+  /** Why the calibration is no longer used (camera restarted, last attempt failed, ...). */
+  invalidReason?: string;
+}
+
+/** One calibration target in the fit result (cam-helper's eye_calibration.json). */
+export interface EyeCalPoint {
+  index: number;
+  label: string;
+  axis: 'center' | 'h' | 'v' | 'oblique';
+  targetDeg: { h: number; v: number };
+  validFraction: number;
+  measuredDeg: { h: number; v: number } | null;
+  /** Pass/fail error: fitted axis for eccentric points, 2D at the centre. */
+  residualDeg: number | null;
+  /** Diagnostic only: vertical at right/left, horizontal at up/down. */
+  offAxisDeg?: number | null;
+  ok: boolean;
+  reason?: string;
+}
+
+export interface EyeCalibrationResult {
+  quality: 'good' | 'repeat';
+  reasons?: string[];
+  maxResidualDeg: number | null;
+  centerSpreadDeg: number | null;
+  asymmetryH: number | null;
+  asymmetryV: number | null;
+  framingWarning?: string;
+  thresholds: { max_point_residual_deg: number; max_center_spread_deg: number; max_asymmetry: number };
+  points: EyeCalPoint[];
+}
+
 /** GET /v1/status. */
 export interface CamHelperStatus {
   version: string;
@@ -33,7 +70,7 @@ export interface CamHelperStatus {
   fpsError?: string;
   validRate1s: number;
   framing: 'ok' | 'edge' | 'noPupil';
-  eyeCalibration: { available: boolean; createdAtEpochMs: number; quality: string } | null;
+  eyeCalibration: EyeCalibrationStatus | null;
   recording: boolean;
   session: CamHelperSession | null;
   /** True while cam-helper is not yet tracking the recording: hold the countdown. */
@@ -64,9 +101,9 @@ export class CamHelperClient {
     this.timeoutMs = timeoutMs;
   }
 
-  private async request<T>(method: 'GET' | 'POST', path: string, body?: object): Promise<T | null> {
+  private async request<T>(method: 'GET' | 'POST', path: string, body?: object, timeoutMs?: number): Promise<T | null> {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), this.timeoutMs);
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs ?? this.timeoutMs);
     try {
       const res = await this.fetchImpl(this.baseUrl + path, {
         method,
@@ -88,10 +125,10 @@ export class CamHelperClient {
    * requestAnimationFrame callback, and after the previously queued ones.
    * sentEpochMs is stamped when the request actually leaves.
    */
-  post<T = unknown>(path: string, body: object): Promise<T | null> {
+  post<T = unknown>(path: string, body: object, opts?: { timeoutMs?: number }): Promise<T | null> {
     const run = () =>
       new Promise<void>((resolve) => setTimeout(resolve, 0)).then(() =>
-        this.request<T>('POST', path, { ...body, sentEpochMs: epochNow() }),
+        this.request<T>('POST', path, { ...body, sentEpochMs: epochNow() }, opts?.timeoutMs),
       );
     const result = this.chain.then(run, run);
     this.chain = result.catch(() => null);

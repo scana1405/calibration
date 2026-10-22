@@ -10,7 +10,7 @@ import {
   type TestProtocol,
 } from './gazeSequence';
 import type { CalibrationProfile } from './profile';
-import type { CamHelperStatus } from './camHelperClient';
+import type { CamHelperStatus, EyeCalibrationResult } from './camHelperClient';
 import type { CamHelperLink } from './useCamHelper';
 import type { GazeStage } from './useGazeTest';
 
@@ -37,7 +37,7 @@ interface GazePanelProps {
   onStart: () => void;
   onDownload: () => void;
   onBack: () => void;
-  camHelper: Pick<CamHelperLink, 'status' | 'lastSession'>;
+  camHelper: Pick<CamHelperLink, 'status' | 'lastSession' | 'eyecal'>;
 }
 
 const SETTING_FIELDS: [NumericSettingKey, string][] = [
@@ -50,7 +50,30 @@ const SETTING_FIELDS: [NumericSettingKey, string][] = [
 const PROTOCOL_TABS: [TestProtocol, string][] = [
   ['gaze', 'Gaze testi'],
   ['check', 'Kontrol dizisi'],
+  ['eyecal', 'Göz kalibrasyonu'],
 ];
+
+export const EYECAL_WARNING = 'Önce göz kalibrasyonu yap.';
+
+/**
+ * Warning before the gaze test: cam-helper has no usable eye calibration, or
+ * only one from before this page was opened. Null when cam-helper is not
+ * connected (stimulus only) or the calibration is fine.
+ */
+export function eyecalWarning(status: CamHelperStatus | null, pageStartEpochMs: number): string | null {
+  if (!status || !status.trackedCamera) return null;
+  const cal = status.eyeCalibration;
+  if (!cal || !cal.available) return EYECAL_WARNING;
+  if (cal.createdAtEpochMs < pageStartEpochMs) return `${EYECAL_WARNING} Mevcut kalibrasyon bu oturumdan önce yapıldı.`;
+  return null;
+}
+
+function formatAge(ms: number): string {
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return 'az önce';
+  if (min < 60) return `${min} dk önce`;
+  return `${Math.floor(min / 60)} sa ${min % 60} dk önce`;
+}
 
 /** Names for kinds that are not described by their label alone. */
 const KIND_NAMES: Partial<Record<PhaseKind, string>> = {
@@ -130,6 +153,16 @@ function CamHelperStatusBlock({ status }: { status: CamHelperStatus | null }) {
           {TRACKER_STATES[status.trackerState]}
           {status.trackerState === 'ready' && status.fps > 0 && ` · ${formatNumber(status.fps)} fps`}
         </dd>
+        <dt>Göz kalibrasyonu</dt>
+        <dd>
+          {!status.eyeCalibration
+            ? 'yok'
+            : status.eyeCalibration.available
+              ? `iyi · ${formatAge(status.serverEpochMs - status.eyeCalibration.createdAtEpochMs)}`
+              : status.eyeCalibration.quality === 'repeat'
+                ? 'tekrar gerekli'
+                : 'geçersiz'}
+        </dd>
         {status.trackerState === 'ready' && (
           <>
             <dt>Çerçeveleme</dt>
@@ -139,6 +172,9 @@ function CamHelperStatusBlock({ status }: { status: CamHelperStatus | null }) {
           </>
         )}
       </dl>
+      {status.eyeCalibration && !status.eyeCalibration.available && status.eyeCalibration.invalidReason && (
+        <p className="hint">Göz kalibrasyonu kullanılmıyor: {CAL_INVALID[status.eyeCalibration.invalidReason] ?? status.eyeCalibration.invalidReason}</p>
+      )}
       {problems.length > 0 && (
         <ul className="warnings">
           {problems.map((p) => (
@@ -148,6 +184,95 @@ function CamHelperStatusBlock({ status }: { status: CamHelperStatus | null }) {
           ))}
         </ul>
       )}
+    </>
+  );
+}
+
+/** cam-helper's reasons for dropping a calibration, in Turkish. */
+const CAL_INVALID: Record<string, string> = {
+  'the camera restarted': 'kamera yeniden başladı',
+  'the camera stopped': 'kamera durdu',
+  'the tracked camera changed': 'izlenen kamera değişti',
+  'the camera resolution changed': 'kamera çözünürlüğü değişti',
+  'the last eye calibration needs to be repeated': 'son kalibrasyon tekrar gerektiriyor',
+};
+
+const AXIS_NAMES: Record<string, string> = { h: 'dikey sapma', v: 'yatay sapma' };
+
+function deg(v: number | null | undefined, digits = 1): string {
+  return v === null || v === undefined ? '–' : `${v.toFixed(digits)}°`;
+}
+
+/** Fit result of an eye calibration run: good or repeat, then per point. */
+function EyecalResultSection({ outcome }: { outcome: CamHelperLink['eyecal'] }) {
+  if (!outcome || outcome.state === 'unreachable') {
+    return <p className="status error">cam-helper yanıt vermedi: kalibrasyon hesaplanamadı.</p>;
+  }
+  if (outcome.state === 'pending') return <p className="hint">Kalibrasyon hesaplanıyor…</p>;
+  const cal: EyeCalibrationResult | null = outcome.calibration;
+  if (!cal) return <p className="hint">Kalibrasyon yapılmadı.</p>;
+  const good = cal.quality === 'good';
+  const t = cal.thresholds;
+  return (
+    <>
+      <p className={`status ${good ? 'ok' : 'error'}`}>
+        {good ? 'Göz kalibrasyonu iyi.' : 'Göz kalibrasyonunu tekrarla.'}
+      </p>
+      {!good && cal.reasons && cal.reasons.length > 0 && (
+        <ul className="warnings">
+          {cal.reasons.map((r) => (
+            <li key={r} className="error">
+              {r}
+            </li>
+          ))}
+        </ul>
+      )}
+      {cal.framingWarning && (
+        <ul className="warnings">
+          <li className="warn">Çerçeveleme: {cal.framingWarning}</li>
+        </ul>
+      )}
+      <dl className="readout">
+        <dt>En büyük nokta hatası</dt>
+        <dd>
+          {deg(cal.maxResidualDeg, 2)} (≤ {t.max_point_residual_deg}°)
+        </dd>
+        <dt>Merkez yayılımı</dt>
+        <dd>
+          {deg(cal.centerSpreadDeg, 2)} (≤ {t.max_center_spread_deg}°)
+        </dd>
+        <dt>Asimetri sağ/sol · yukarı/aşağı</dt>
+        <dd>
+          {cal.asymmetryH === null ? '–' : `%${Math.round(cal.asymmetryH * 100)}`} ·{' '}
+          {cal.asymmetryV === null ? '–' : `%${Math.round(cal.asymmetryV * 100)}`} (≤ %{Math.round(t.max_asymmetry * 100)})
+        </dd>
+      </dl>
+      <table className="points">
+        <thead>
+          <tr>
+            <th>Nokta</th>
+            <th>Hedef</th>
+            <th>Geçerli</th>
+            <th>Hata</th>
+            <th title="Tanı amaçlı, geçme koşulu değil: sağ/sol noktada dikey, yukarı/aşağı noktada yatay ölçülen açı">
+              Eksen dışı
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {cal.points.map((p) => (
+            <tr key={p.index} className={p.ok && (p.residualDeg ?? 0) <= t.max_point_residual_deg ? '' : 'bad'}>
+              <td>{PHASE_LABEL_NAMES[p.label as keyof typeof PHASE_LABEL_NAMES] ?? p.label}</td>
+              <td>
+                {p.axis === 'v' ? deg(p.targetDeg.v, 0) : deg(p.targetDeg.h, 0)}
+              </td>
+              <td>%{Math.round(p.validFraction * 100)}</td>
+              <td title={p.reason}>{p.ok ? deg(p.residualDeg, 2) : 'yok'}</td>
+              <td title={AXIS_NAMES[p.axis]}>{p.offAxisDeg === undefined ? '' : deg(p.offAxisDeg, 2)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </>
   );
 }
@@ -203,6 +328,22 @@ function PrepSection({
     <section>
       {notice && <p className="status error">{notice}</p>}
       <CamHelperStatusBlock status={camHelper.status} />
+      {protocol === 'gaze' && eyecalWarning(camHelper.status, performance.timeOrigin) && (
+        <ul className="warnings">
+          <li className="warn">{eyecalWarning(camHelper.status, performance.timeOrigin)}</li>
+        </ul>
+      )}
+      {protocol === 'eyecal' && (
+        <p className="hint">
+          Sabit 24 s'lik dizi: merkez, sağ, merkez, sol, merkez, yukarı, merkez, aşağı, merkez. Hasta her noktaya
+          bakar; cam-helper piksel–derece dönüşümünü hesaplar. Gözlük yerinden oynarsa tekrarla.
+        </p>
+      )}
+      {protocol === 'eyecal' && !camHelper.status && (
+        <ul className="warnings">
+          <li className="error">Göz kalibrasyonu için cam-helper açık olmalı.</li>
+        </ul>
+      )}
       {protocol === 'check' && (
         <p className="hint">
           Sabit 50 s'lik dizi: bakış konumları, göz kırpma, yavaş izleme, hızlı sakkadlar ve göz kapama. Açılar
@@ -250,7 +391,7 @@ function PrepSection({
                 <span>{phaseName(phase)}</span>
                 <span>{phaseAngle(phase)}</span>
                 <span>
-                  {protocol === 'check'
+                  {protocol !== 'gaze'
                     ? `${formatNumber(startMs / 1000)}–${formatNumber((startMs + plannedMs) / 1000)} s`
                     : formatSeconds(plannedMs)}
                 </span>
@@ -301,7 +442,7 @@ function DoneSection({
   notice,
   camHelper,
 }: GazePanelProps & { result: GazeRecord }) {
-  const saved = camHelper.lastSession;
+  const saved = result.test === 'eyecal' ? null : camHelper.lastSession;
   const last = result.phases[result.phases.length - 1];
   const durationMs = last?.endMs ?? 0;
   return (
@@ -310,6 +451,7 @@ function DoneSection({
         {result.completed ? 'Test tamamlandı.' : 'Test iptal edildi.'}
       </p>
       {notice && <p className="hint">{notice}</p>}
+      {result.test === 'eyecal' && result.completed && <EyecalResultSection outcome={camHelper.eyecal} />}
       <dl className="readout">
         <dt>Toplam süre</dt>
         <dd>{formatSeconds(durationMs)}</dd>

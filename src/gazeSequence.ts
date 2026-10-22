@@ -37,13 +37,24 @@ export const SETTING_RANGES: Record<NumericSettingKey, [number, number]> = {
   countdownSec: [0, 10],
 };
 
-/** 'gaze': the configurable gaze test. 'check': the fixed 50 s tracking check sequence. */
-export type TestProtocol = 'gaze' | 'check';
+/**
+ * 'gaze': the configurable gaze test. 'check': the fixed 50 s tracking check
+ * sequence. 'eyecal': the fixed 24 s eye calibration for cam-helper.
+ */
+export type TestProtocol = 'gaze' | 'check' | 'eyecal';
 
 /** Settings a run needs whatever the protocol; the check sequence has fixed durations. */
 export type RunSettings = Pick<GazeSettings, 'countdownSec' | 'beepOnChange'>;
 
-export type PhaseKind = 'gaze' | 'return' | 'fixationOff' | 'blink' | 'pursuit' | 'saccade' | 'eyesClosed';
+export type PhaseKind =
+  | 'gaze'
+  | 'return'
+  | 'fixationOff'
+  | 'blink'
+  | 'pursuit'
+  | 'saccade'
+  | 'eyesClosed'
+  | 'calibration';
 export type PhaseLabel = 'center' | 'right' | 'left' | 'up' | 'down' | 'return' | 'pursuit';
 
 /**
@@ -190,6 +201,33 @@ export function buildCheckSequence(anglesDeg: { horizontal: number; vertical: nu
   phases.push({ kind: 'eyesClosed', label: 'center', angleDeg: center, plannedMs: 2000 });
   phases.push({ kind: 'gaze', label: 'center', angleDeg: center, plannedMs: 2000 });
   return phases;
+}
+
+/**
+ * The eye calibration sequence for cam-helper: centre 3 s, right 3, centre 2,
+ * left 3, centre 2, up 3, centre 2, down 3, centre 3 (24 s), at the
+ * calibration's angles. cam-helper fits pixel-to-degree from the pupil
+ * position in each phase (from 700 ms after its start).
+ */
+export function buildEyecalSequence(anglesDeg: { horizontal: number; vertical: number }): GazePhase[] {
+  const { horizontal: h, vertical: v } = anglesDeg;
+  const steps: [PhaseLabel, number, number, number][] = [
+    ['center', 0, 0, 3000],
+    ['right', h, 0, 3000],
+    ['center', 0, 0, 2000],
+    ['left', -h, 0, 3000],
+    ['center', 0, 0, 2000],
+    ['up', 0, v, 3000],
+    ['center', 0, 0, 2000],
+    ['down', 0, -v, 3000],
+    ['center', 0, 0, 3000],
+  ];
+  return steps.map(([label, ah, av, plannedMs]) => ({
+    kind: 'calibration',
+    label,
+    angleDeg: { h: ah, v: av },
+    plannedMs,
+  }));
 }
 
 export function totalPlannedMs(phases: GazePhase[]): number {

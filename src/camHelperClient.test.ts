@@ -81,6 +81,22 @@ describe('CamHelperClient', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  it('allows a longer timeout for one request', async () => {
+    const fetchImpl = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((resolve, reject) => {
+          const t = setTimeout(() => resolve(new Response('{"completed":true}', { status: 200 })), 80);
+          init?.signal?.addEventListener('abort', () => {
+            clearTimeout(t);
+            reject(new DOMException('aborted', 'AbortError'));
+          });
+        }),
+    );
+    const client = new CamHelperClient('http://127.0.0.1:47800', fetchImpl, 30);
+    await expect(client.post('/v1/eyecal/end', { sessionId: 's' })).resolves.toBeNull(); // default 30 ms
+    await expect(client.post('/v1/eyecal/end', { sessionId: 's' }, { timeoutMs: 500 })).resolves.toEqual({ completed: true });
+  });
+
   it('treats error responses as no answer', async () => {
     const { fetchImpl } = recordingFetch(() => new Response('{"error":"unknown session"}', { status: 404 }));
     const client = new CamHelperClient('http://127.0.0.1:47800', fetchImpl, 100);

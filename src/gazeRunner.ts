@@ -25,7 +25,7 @@ export interface GazeRecord {
   /** performance.timeOrigin + performance.now() at test start, for clock matching. */
   startedAtEpochMs: number;
   completed: boolean;
-  /** Full gaze settings for 'gaze'; only countdown and beep for 'check'. */
+  /** Full gaze settings for 'gaze'; only countdown and beep for 'check' and 'eyecal'. */
   settings: GazeSettings | RunSettings;
   profile: CalibrationProfile;
   phases: PhaseRecord[];

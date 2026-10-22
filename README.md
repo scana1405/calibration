@@ -73,7 +73,7 @@ Tüm pikseller fiziksel cihaz pikselidir (`devicePixelRatio` hesaba katılır). 
 
 ## Gaze testi
 
-Kalibrasyondan sonra hedef noktayı sırayla merkeze, sağa, sola, yukarıya ve aşağıya yerleştirir ve her fazın gerçek zamanını kaydeder. Kamera ya da göz takibi yoktur, uygulama yalnızca uyaranı gösterir.
+Kalibrasyondan sonra hedef noktayı sırayla merkeze, sağa, sola, yukarıya ve aşağıya yerleştirir ve her fazın gerçek zamanını kaydeder. Uygulama kamera kullanmaz, yalnızca uyaranı gösterir; cam-helper çalışıyorsa göz kamerasını o kaydeder ve pupili izler (bkz. [cam-helper bağlantısı](#cam-helper-bağlantısı)).
 
 ### Akış
 
@@ -168,3 +168,33 @@ Gaze paneli üstündeki `Kontrol dizisi` sekmesi, göz takibinin sağlamlığın
 Bip sesi her adımın başında çalar; sakkad atlamalarında yalnızca ilkinde çalar. Gözler kapalıyken hastaya açma zamanını bip bildirir, bip kapalıysa sözlü söyle.
 
 Kayıt aynı biçimdedir, şu farklarla: `test: "check"`, dosya adı `vng-check-YYYY-MM-DD-HHmm.json`, `settings` yalnızca `countdownSec` ve `beepOnChange` içerir. Ek `kind` değerleri: `blink`, `pursuit`, `saccade`, `eyesClosed` (`targetPx: null`). Her sakkad atlaması ayrı bir fazdır (`label`: `right` ya da `left`). İzleme fazı `label: "pursuit"`, başlangıç hedefi merkez ve `motion: { "amplitudeDeg": 25, "frequencyHz": 0.25 }` taşır; `t` fazın başından itibaren duraklatmalar hariç geçen süredir (duraklatmada hedef donar).
+
+## Göz kalibrasyonu
+
+Gaze paneli üstündeki `Göz kalibrasyonu` sekmesi, cam-helper'ın göz takibi için piksel–derece dönüşümünü hesaplamasını sağlayan sabit 24 s'lik diziyi oynatır. Açılar kalibrasyondaki yatay ve dikey açılardır; ayarlardan yalnızca geri sayım ve bip sesi geçerlidir. Hazırlık, tuşlar, iptal ve duraklatma kuralları gaze testiyle aynıdır.
+
+| Adım | Süre (s) |
+| --- | --- |
+| Merkez | 3 |
+| Sağ | 3 |
+| Merkez | 2 |
+| Sol | 3 |
+| Merkez | 2 |
+| Yukarı | 3 |
+| Merkez | 2 |
+| Aşağı | 3 |
+| Merkez | 3 |
+
+cam-helper her fazın başından 700 ms sonrasından fazın sonuna kadar geçerli karelerin ortanca pupil konumunu alır ve eksen başına `x = x0 + Rx · sin(θ)` modelini oturtur. Bitiş ekranı sonucu gösterir: **iyi** ya da **tekrarla**, nokta başına hata (derece), merkez yayılımı ve sağ/sol, yukarı/aşağı asimetrisi. "Eksen dışı" sütunu yalnızca tanı içindir (sağ/sol noktada dikey, yukarı/aşağı noktada yatay sapma; kameranın dönük olduğunu gösterir), geçme koşulu değildir. Sonuç `tekrarla` ise önceki kalibrasyon da kullanılmaz.
+
+Gaze testinin hazırlık ekranı, cam-helper bağlıyken geçerli bir göz kalibrasyonu yoksa ya da kalibrasyon bu sayfa açılmadan önce yapıldıysa "Önce göz kalibrasyonu yap" uyarısı gösterir; test yine de başlatılabilir. Kamera kayıt dışı bir nedenle yeniden başlarsa (gözlük ya da cihaz değişmiş olabilir) cam-helper kalibrasyonu geçersiz sayar.
+
+Kayıt aynı biçimdedir, şu farklarla: `test: "eyecal"`, dosya adı `vng-eyecal-YYYY-MM-DD-HHmm.json`, `settings` yalnızca `countdownSec` ve `beepOnChange` içerir. Ek `kind` değeri: `calibration`.
+
+## cam-helper bağlantısı
+
+Uygulama, aynı bilgisayarda çalışan cam-helper ile `http://127.0.0.1:47800` üzerinden konuşur (adres `localStorage` içinde `vng-camhelper-url-v1` ile değiştirilebilir). Bağlantı yoksa testler eskisi gibi yalnızca uyaran olarak çalışır; panel "cam-helper bağlı değil, yalnızca uyaran" yazar. İstekler 500 ms'de zaman aşımına uğrar ve çizimi hiç bekletmez.
+
+- Gaze testi ve kontrol dizisi: geri sayım başında `session/start` (cam-helper göz kamerasını kaydetmeye başlar), her faz başında `phase` (fazın kayıttaki başlangıç zamanı, epoch ms), `pause` / `resume`, bitişte ya da iptalde tam kayıtla `session/end`.
+- Göz kalibrasyonu: `eyecal/start`, `phase`, `pause` / `resume`, `eyecal/end` (yanıt: kalibrasyon sonucu).
+- Geri sayım sıfırda en fazla 10 s bekler ("Kamera hazırlanıyor"): cam-helper kaydı ve takibi hazır olana kadar. Süre dolarsa test yine başlar ve bitiş ekranı bunu belirtir.

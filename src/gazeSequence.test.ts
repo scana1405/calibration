@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { computeScale } from './geometry';
 import {
   buildCheckSequence,
+  buildEyecalSequence,
   buildGazeSequence,
   DEFAULT_GAZE_SETTINGS,
   phasesOutsideCanvas,
@@ -142,5 +143,32 @@ describe('buildCheckSequence', () => {
     expect(at(3000).x).toBeCloseTo(left.x, 0);
     expect(at(1000).y).toBe(540);
     expect(phaseTargetAt(placed[0], 1234, geometry)).toEqual(placed[0].targetPx);
+  });
+});
+
+describe('buildEyecalSequence', () => {
+  it('fixed 24 s sequence of calibration phases at the profile angles', () => {
+    const phases = buildEyecalSequence(angles);
+    expect(phases.map((p) => [p.label, p.angleDeg.h, p.angleDeg.v, p.plannedMs])).toEqual([
+      ['center', 0, 0, 3000],
+      ['right', 25, 0, 3000],
+      ['center', 0, 0, 2000],
+      ['left', -25, 0, 3000],
+      ['center', 0, 0, 2000],
+      ['up', 0, 17, 3000],
+      ['center', 0, 0, 2000],
+      ['down', 0, -17, 3000],
+      ['center', 0, 0, 3000],
+    ]);
+    expect(phases.every((p) => p.kind === 'calibration' && !p.motion && !p.continues)).toBe(true);
+    expect(totalPlannedMs(phases)).toBe(24000);
+  });
+
+  it('every phase has a target on the canvas', () => {
+    const scale = computeScale({ width: 1152, height: 864 }, { width: 108, height: 81 });
+    const placed = placeSequence(buildEyecalSequence(angles), { x: 960, y: 540 }, 100, scale);
+    expect(placed.every((p) => p.targetPx !== null)).toBe(true);
+    expect(placed[1].targetPx!.x).toBeGreaterThan(960); // right is right of centre
+    expect(placed[5].targetPx!.y).toBeLessThan(540); // up is above
   });
 });
