@@ -4,6 +4,8 @@ import type { Mode, Scene } from './draw';
 import { GazePanel, type GazePrep } from './GazePanel';
 import { gazeRecordFilename } from './gazeRunner';
 import {
+  buildCheckSequence,
+  buildEyecalSequence,
   buildGazeSequence,
   loadGazeSettings,
   PHASE_LABEL_NAMES,
@@ -14,7 +16,10 @@ import {
   validateGazeSettings,
   type GazeSettings,
   type NumericSettingKey,
+  type RunSettings,
+  type TestProtocol,
 } from './gazeSequence';
+import { useCamHelper } from './useCamHelper';
 import { useGazeTest } from './useGazeTest';
 import {
   canvasCenter,
@@ -294,9 +299,11 @@ export default function App() {
   const [initialGazeSettings] = useState(loadGazeSettings);
   const [gazeInputs, setGazeInputs] = useState(() => gazeInputsFromSettings(initialGazeSettings));
   const [beepOnChange, setBeepOnChange] = useState(initialGazeSettings.beepOnChange);
+  const [protocol, setProtocol] = useState<TestProtocol>('gaze');
   const [isFullscreen, setIsFullscreen] = useState(() => document.fullscreenElement !== null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const gaze = useGazeTest(canvasRef, canvas);
+  const camHelper = useCamHelper(mode === 'gaze');
+  const gaze = useGazeTest(canvasRef, canvas, camHelper);
 
   const derived = useMemo(
     () => derive(inputs, canvas, devicePixelRatio, basis, centerState),
@@ -308,6 +315,13 @@ export default function App() {
   useEffect(() => {
     if (gazeSettings.settings) saveGazeSettings(gazeSettings.settings);
   }, [gazeSettings]);
+
+  // The check sequence has fixed durations: only the countdown has to be valid.
+  const runSettings = useMemo<GazeSettings | RunSettings | null>(() => {
+    if (protocol === 'gaze') return gazeSettings.settings;
+    const countdownSec = parseDecimal(gazeInputs.countdownSec);
+    return gazeSettings.errors.countdownSec || countdownSec === null ? null : { countdownSec, beepOnChange };
+  }, [protocol, gazeSettings, gazeInputs.countdownSec, beepOnChange]);
 
   useEffect(() => {
     const onChange = () => setIsFullscreen(document.fullscreenElement !== null);
@@ -399,7 +413,7 @@ export default function App() {
 
   const gazePrep = useMemo<GazePrep>(() => {
     const reasons: string[] = [];
-    const { settings } = gazeSettings;
+    const settings = runSettings;
     const { scale } = derived;
     if (!currentProfile || !scale || !canvas) {
       reasons.push('Önce kalibrasyonu tamamla: ölçek, mesafe ve açılar geçerli olmalı.');
@@ -408,8 +422,14 @@ export default function App() {
 
     let phases = null;
     if (currentProfile && scale && canvas && settings) {
+      const sequence =
+        protocol === 'gaze'
+          ? buildGazeSequence(settings as GazeSettings, currentProfile.anglesDeg)
+          : protocol === 'eyecal'
+            ? buildEyecalSequence(currentProfile.anglesDeg)
+            : buildCheckSequence(currentProfile.anglesDeg);
       phases = placeSequence(
-        buildGazeSequence(settings, currentProfile.anglesDeg),
+        sequence,
         currentProfile.centerPx,
         currentProfile.eyeDistanceCm,
         scale,
@@ -424,7 +444,7 @@ export default function App() {
     }
     if (!isFullscreen) reasons.push('Tam ekrana geç (F). Kalibrasyon ve test tam ekranda yapılmalı.');
     return { profile: currentProfile, phases, reasons };
-  }, [currentProfile, gazeSettings, derived, canvas, isFullscreen]);
+  }, [currentProfile, runSettings, protocol, derived, canvas, isFullscreen]);
 
   const resetGaze = gaze.reset;
   const enterGaze = useCallback(() => {
@@ -434,13 +454,22 @@ export default function App() {
 
   const startGaze = () => {
     const { profile, phases, reasons } = gazePrep;
-    const settings = gazeSettings.settings;
-    if (reasons.length > 0 || !profile || !phases || !settings || !scene) return;
-    gaze.start({ profile, settings, phases, scene: { ...scene, mode: 'gaze', gaze: undefined } });
+    const settings = runSettings;
+    const { scale } = derived;
+    if (reasons.length > 0 || !profile || !phases || !settings || !scale || !scene) return;
+    gaze.start({
+      test: protocol,
+      profile,
+      settings,
+      phases,
+      geometry: { center: profile.centerPx, distanceCm: profile.eyeDistanceCm, scale },
+      scene: { ...scene, mode: 'gaze', gaze: undefined },
+    });
   };
 
   const downloadGazeRecord = () => {
-    if (gaze.result) downloadJson(gaze.result, gazeRecordFilename(new Date(gaze.result.startedAtEpochMs)));
+    const record = gaze.result;
+    if (record) downloadJson(record, gazeRecordFilename(new Date(record.startedAtEpochMs), record.test));
   };
 
   const moveCenter = useCallback(
@@ -513,7 +542,7 @@ export default function App() {
       // Gaze preparation shows only the centre target; the finish screen shows nothing.
       gaze:
         mode === 'gaze'
-          ? { target: gaze.stage === 'prep' ? derived.center : null, countdown: null, paused: false }
+          ? { target: gaze.stage === 'prep' ? derived.center : null, countdown: null, cue: null, paused: false }
           : undefined,
     };
   }, [mode, derived, devicePixelRatio, labelsVisible, gaze.stage]);
@@ -531,6 +560,11 @@ export default function App() {
       />
       {panelVisible && mode === 'gaze' && !gaze.playing && (
         <GazePanel
+          protocol={protocol}
+          onProtocolChange={(p) => {
+            gaze.reset();
+            setProtocol(p);
+          }}
           stage={gaze.stage}
           prep={gazePrep}
           inputs={gazeInputs}
@@ -543,6 +577,7 @@ export default function App() {
           result={gaze.result}
           onStart={startGaze}
           onDownload={downloadGazeRecord}
+          camHelper={camHelper}
           onBack={() => {
             gaze.reset();
             setMode('verify');

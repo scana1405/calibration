@@ -100,3 +100,16 @@ describe('GazeRunner', () => {
     }
   });
 });
+
+describe('GazeRunner.phaseTimeMs', () => {
+  it('counts from the phase start and freezes while paused', () => {
+    const { runner } = makeRunner();
+    runner.tick(1000);
+    runner.tick(21000);
+    expect(runner.phaseTimeMs(23000)).toBe(2000);
+    runner.pause(24000);
+    expect(runner.phaseTimeMs(30000)).toBe(3000);
+    runner.resume(30000);
+    expect(runner.phaseTimeMs(31000)).toBe(4000);
+  });
+});
