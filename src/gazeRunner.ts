@@ -5,28 +5,37 @@
 // passes its cumulative planned end, so frame delays never accumulate. All
 // recorded ...Ms values are wall-clock ms since start and include pauses.
 
-import type { GazeSettings, PhaseKind, PhaseLabel, PlacedPhase } from './gazeSequence';
+import type {
+  GazeSettings,
+  PhaseKind,
+  PhaseLabel,
+  PhaseMotion,
+  PlacedPhase,
+  RunSettings,
+  TestProtocol,
+} from './gazeSequence';
 import type { Point } from './geometry';
 import type { CalibrationProfile } from './profile';
 
 /** The downloadable test record; field names are a contract for later analysis. */
 export interface GazeRecord {
   version: 1;
-  test: 'gaze';
+  test: TestProtocol;
   startedAt: string;
   /** performance.timeOrigin + performance.now() at test start, for clock matching. */
   startedAtEpochMs: number;
   completed: boolean;
-  settings: GazeSettings;
+  /** Full gaze settings for 'gaze'; only countdown and beep for 'check'. */
+  settings: GazeSettings | RunSettings;
   profile: CalibrationProfile;
   phases: PhaseRecord[];
   pauses: PauseRecord[];
 }
 
-export function gazeRecordFilename(date: Date): string {
+export function gazeRecordFilename(date: Date, test: TestProtocol = 'gaze'): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return (
-    `vng-gaze-${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `vng-${test}-${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
     `-${pad(date.getHours())}${pad(date.getMinutes())}.json`
   );
 }
@@ -37,6 +46,8 @@ export interface PhaseRecord {
   label: PhaseLabel;
   angleDeg: { h: number; v: number };
   targetPx: Point | null;
+  /** Pursuit phases only. */
+  motion?: PhaseMotion;
   plannedMs: number;
   startMs: number;
   endMs: number | null;
@@ -103,6 +114,14 @@ export class GazeRunner {
     return now - this.startTime!;
   }
 
+  /** Active ms into the current phase as of the last tick's phase; frozen while paused. */
+  phaseTimeMs(now: number): number {
+    if (this.startTime === null || this.finishedFlag) return 0;
+    const active = this.elapsed(this.pausedAt ?? now) - this.pausedTotalMs;
+    const phaseStart = this.current === 0 ? 0 : this.cumulativeEndMs[this.current - 1];
+    return Math.max(0, active - phaseStart);
+  }
+
   tick(now: number): TickResult {
     if (this.startTime === null) throw new Error('GazeRunner.tick before start');
     if (this.finishedFlag) return { phaseIndex: null, phaseChanged: false, finished: true };
@@ -141,6 +160,7 @@ export class GazeRunner {
       label: p.label,
       angleDeg: { ...p.angleDeg },
       targetPx: p.targetPx ? { ...p.targetPx } : null,
+      ...(p.motion && { motion: { ...p.motion } }),
       plannedMs: p.plannedMs,
       startMs: elapsed,
       endMs: null,

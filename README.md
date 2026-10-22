@@ -31,7 +31,7 @@ npm run build    # üretim derlemesi (dist/)
 | Tuş | İşlev |
 | --- | --- |
 | `1`, `2`, `3` | Ölçek, merkez, doğrulama modu |
-| `4` | Gaze testi hazırlık ekranı |
+| `4` | Gaze testi / kontrol dizisi hazırlık ekranı |
 | `F` | Tam ekranı aç ya da kapat |
 | `P` | Ayar panelini gizle ya da göster |
 | Ok tuşları | Merkezi 1 piksel taşı (merkez ve doğrulama modunda) |
@@ -143,3 +143,28 @@ Kayıt yalnızca bellekte tutulur ve `vng-gaze-YYYY-MM-DD-HHmm.json` olarak indi
 - `startedAtEpochMs` = `performance.timeOrigin + performance.now()`; göz takip verisiyle saat eşlemek için.
 - `kind`: `gaze`, `return`, `fixationOff`. `label`: `center`, `right`, `left`, `up`, `down`, `return`; `fixationOff` fazları önceki bakışın etiketini taşır ve `targetPx` değerleri `null` olur.
 - İptal edilen testte başlamamış fazlar kayıtta yer almaz.
+
+## Kontrol dizisi
+
+Gaze paneli üstündeki `Kontrol dizisi` sekmesi, göz takibinin sağlamlığını hızlıca denetlemek için sabit 50 s'lik bir dizi oynatır. Süreler sabittir; açılar kalibrasyondaki yatay ve dikey açılardır. Ayarlardan yalnızca geri sayım ve bip sesi geçerlidir. Hazırlık, tuşlar, iptal ve duraklatma kuralları gaze testiyle aynıdır.
+
+| Zaman (s) | Adım | Ne denetlenir |
+| --- | --- | --- |
+| 0–5 | Merkez | Titreşim (jitter) tabanı |
+| 5–8 | Sağ | Yanal bakış |
+| 8–11 | Merkez | Dönüş doğruluğu |
+| 11–14 | Sol | Yanal bakış |
+| 14–17 | Merkez | Dönüş doğruluğu |
+| 17–20 | Yukarı | Üst göz kapağı örtmesi |
+| 20–23 | Merkez | Dönüş doğruluğu |
+| 23–26 | Aşağı | Alt kapak, kirpikler |
+| 26–29 | Merkez | Dönüş doğruluğu |
+| 29–33 | 3 kez göz kırpma (hedef merkezde, altında "3 kez göz kırp") | Kırpma işaretleme, yanlış uydurma |
+| 33–41 | Yavaş izleme sol ↔ sağ: yatay açı = A · sin(2π · 0.25 Hz · t), 2 tam salınım | Sürekli takip |
+| 41–46 | Hızlı sakkad: sağ, sol, sağ… her 0.5 s'de bir atlama (10 konum) | Hareket bulanıklığı, hızlı faz |
+| 46–48 | Gözler kapalı (hedef yok, "Gözlerini kapat") | Kayıp pupil |
+| 48–50 | Merkez | Pupil yeniden bulma |
+
+Bip sesi her adımın başında çalar; sakkad atlamalarında yalnızca ilkinde çalar. Gözler kapalıyken hastaya açma zamanını bip bildirir, bip kapalıysa sözlü söyle.
+
+Kayıt aynı biçimdedir, şu farklarla: `test: "check"`, dosya adı `vng-check-YYYY-MM-DD-HHmm.json`, `settings` yalnızca `countdownSec` ve `beepOnChange` içerir. Ek `kind` değerleri: `blink`, `pursuit`, `saccade`, `eyesClosed` (`targetPx: null`). Her sakkad atlaması ayrı bir fazdır (`label`: `right` ya da `left`). İzleme fazı `label: "pursuit"`, başlangıç hedefi merkez ve `motion: { "amplitudeDeg": 25, "frequencyHz": 0.25 }` taşır; `t` fazın başından itibaren duraklatmalar hariç geçen süredir (duraklatmada hedef donar).

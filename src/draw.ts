@@ -7,6 +7,8 @@ export interface GazeView {
   target: Point | null;
   /** Countdown number drawn above the target, or null. */
   countdown: number | null;
+  /** Instruction drawn below the target (or the centre when there is none), or null. */
+  cue: string | null;
   paused: boolean;
 }
 
@@ -162,6 +164,15 @@ function drawGaze(ctx: CanvasRenderingContext2D, scene: Scene, gaze: GazeView): 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     ctx.fillText(String(gaze.countdown), gaze.target.x, Math.max(size, gaze.target.y - size * 0.5));
+  }
+
+  if (gaze.cue) {
+    const at = gaze.target ?? scene.center;
+    setFont(ctx, canvas);
+    ctx.fillStyle = LABEL;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(gaze.cue, at.x, at.y + scene.dotDiameterPx / 2 + fontSizePx(canvas) * 1.5);
   }
 
   if (gaze.paused) {

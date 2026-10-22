@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { computeScale } from './geometry';
 import {
+  buildCheckSequence,
   buildGazeSequence,
   DEFAULT_GAZE_SETTINGS,
   phasesOutsideCanvas,
+  phaseTargetAt,
   placeSequence,
   totalPlannedMs,
   validateGazeSettings,
@@ -88,5 +90,57 @@ describe('placeSequence', () => {
     const phases = buildGazeSequence(DEFAULT_GAZE_SETTINGS, { horizontal: 25, vertical: 25 });
     const placed = placeSequence(phases, { x: 960, y: 490 }, 100, scale);
     expect(phasesOutsideCanvas(placed, canvas, 100, scale).map((p) => p.label)).toEqual(['up']);
+  });
+});
+
+describe('buildCheckSequence', () => {
+  const phases = buildCheckSequence(angles);
+
+  it('50 000 ms with the fixed step boundaries', () => {
+    expect(totalPlannedMs(phases)).toBe(50_000);
+    const ends: number[] = [];
+    let t = 0;
+    for (const p of phases) {
+      t += p.plannedMs;
+      if (!p.continues) ends.push(t - p.plannedMs);
+    }
+    ends.push(t);
+    expect(ends.map((ms) => ms / 1000)).toEqual([0, 5, 8, 11, 14, 17, 20, 23, 26, 29, 33, 41, 46, 48, 50]);
+  });
+
+  it('steps in order, angles from the profile', () => {
+    expect(phases.filter((p) => !p.continues).map((p) => `${p.kind}:${p.label}`)).toEqual([
+      'gaze:center', 'gaze:right', 'return:return', 'gaze:left', 'return:return', 'gaze:up', 'return:return',
+      'gaze:down', 'return:return', 'blink:center', 'pursuit:pursuit', 'saccade:right', 'eyesClosed:center',
+      'gaze:center',
+    ]);
+    expect(phases.find((p) => p.label === 'up')!.angleDeg).toEqual({ h: 0, v: 17 });
+    expect(phases.find((p) => p.kind === 'pursuit')!.motion).toEqual({ amplitudeDeg: 25, frequencyHz: 0.25 });
+  });
+
+  it('saccades alternate right/left every 500 ms; only the first starts a step', () => {
+    const saccades = phases.filter((p) => p.kind === 'saccade');
+    expect(saccades).toHaveLength(10);
+    saccades.forEach((p, i) => {
+      expect(p.plannedMs).toBe(500);
+      expect(p.angleDeg.h).toBe(i % 2 === 0 ? 25 : -25);
+      expect(Boolean(p.continues)).toBe(i > 0);
+    });
+  });
+
+  it('eyes closed has no target; pursuit follows a sine between the side targets', () => {
+    const scale = computeScale({ width: 1152, height: 864 }, { width: 108, height: 81 });
+    const geometry = { center: { x: 960, y: 540 }, distanceCm: 100, scale };
+    const placed = placeSequence(phases, geometry.center, 100, scale);
+    expect(placed.find((p) => p.kind === 'eyesClosed')!.targetPx).toBeNull();
+    const pursuit = placed.find((p) => p.kind === 'pursuit')!;
+    const right = placed.find((p) => p.label === 'right')!.targetPx!;
+    const left = placed.find((p) => p.label === 'left')!.targetPx!;
+    const at = (ms: number) => phaseTargetAt(pursuit, ms, geometry)!;
+    expect(at(0).x).toBeCloseTo(960);
+    expect(at(1000).x).toBeCloseTo(right.x, 0);
+    expect(at(3000).x).toBeCloseTo(left.x, 0);
+    expect(at(1000).y).toBe(540);
+    expect(phaseTargetAt(placed[0], 1234, geometry)).toEqual(placed[0].targetPx);
   });
 });

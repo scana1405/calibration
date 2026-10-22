@@ -6,7 +6,15 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { beep, initBeep } from './beep';
 import { drawScene, type Scene } from './draw';
 import { GazeRunner, type GazeRecord } from './gazeRunner';
-import type { GazeSettings, PlacedPhase } from './gazeSequence';
+import {
+  PHASE_CUES,
+  phaseTargetAt,
+  type GazeSettings,
+  type PlacedPhase,
+  type PlacementGeometry,
+  type RunSettings,
+  type TestProtocol,
+} from './gazeSequence';
 import type { Size } from './geometry';
 import type { CalibrationProfile } from './profile';
 
@@ -14,9 +22,12 @@ export type GazeStage = 'prep' | 'countdown' | 'running' | 'done';
 
 /** Everything a test run needs, snapshotted when it starts. */
 export interface GazeRunPlan {
+  test: TestProtocol;
   profile: CalibrationProfile;
-  settings: GazeSettings;
+  settings: GazeSettings | RunSettings;
   phases: PlacedPhase[];
+  /** Geometry the phases were placed with; moving targets are placed with it every frame. */
+  geometry: PlacementGeometry;
   /** Scene for the gaze canvas (canvas size, centre, dot size). */
   scene: Scene;
 }
@@ -73,7 +84,7 @@ export function useGazeTest(canvasRef: RefObject<HTMLCanvasElement | null>, canv
     const startedAtEpochMs = performance.timeOrigin + runner.startedAt!;
     setResult({
       version: 1,
-      test: 'gaze',
+      test: plan.test,
       startedAt: new Date(startedAtEpochMs).toISOString(),
       startedAtEpochMs,
       completed: runner.completed,
@@ -135,8 +146,8 @@ export function useGazeTest(canvasRef: RefObject<HTMLCanvasElement | null>, canv
       const ctx = canvasRef.current?.getContext('2d');
       if (!session || !ctx) return;
       const { plan, runner } = session;
-      const draw = (target: Scene['center'] | null, countdown: number | null) =>
-        drawScene(ctx, { ...plan.scene, gaze: { target, countdown, paused: runner.paused } });
+      const draw = (target: Scene['center'] | null, countdown: number | null, cue: string | null = null) =>
+        drawScene(ctx, { ...plan.scene, gaze: { target, countdown, cue, paused: runner.paused } });
 
       if (stageRef.current === 'countdown') {
         session.countdownStart ??= now;
@@ -153,12 +164,13 @@ export function useGazeTest(canvasRef: RefObject<HTMLCanvasElement | null>, canv
 
       const tick = runner.tick(now);
       if (tick.finished) {
-        drawScene(ctx, { ...plan.scene, gaze: { target: null, countdown: null, paused: false } });
+        drawScene(ctx, { ...plan.scene, gaze: { target: null, countdown: null, cue: null, paused: false } });
         finish();
         return;
       }
-      if (tick.phaseChanged && plan.settings.beepOnChange) beep();
-      draw(runner.currentPhase?.targetPx ?? null, null);
+      const phase = runner.currentPhase!;
+      if (tick.phaseChanged && plan.settings.beepOnChange && !phase.continues) beep();
+      draw(phaseTargetAt(phase, runner.phaseTimeMs(now), plan.geometry), null, PHASE_CUES[phase.kind] ?? null);
       frameId = requestAnimationFrame(frame);
     };
     frameId = requestAnimationFrame(frame);
