@@ -6,6 +6,20 @@
 export const CAM_HELPER_URL_KEY = 'vng-camhelper-url-v1';
 export const DEFAULT_CAM_HELPER_URL = 'http://127.0.0.1:47800';
 export const REQUEST_TIMEOUT_MS = 500;
+export const CLOCK_SYNC_ROUNDS = 5;
+
+/**
+ * Offset between cam-helper's clock and this page's clock
+ * (performance.timeOrigin + performance.now(), which can drift away from the
+ * system clock, e.g. after the computer slept). cam-helper converts the
+ * session's browser timestamps as browserTime + offsetMs.
+ */
+export interface ClockSync {
+  offsetMs: number;
+  /** Round-trip time of the sample the offset comes from (the lowest). */
+  rttMs: number;
+  samples: { offsetMs: number; rttMs: number }[];
+}
 
 /** Browser epoch time, on the same clock as GazeRecord.startedAtEpochMs. */
 export function epochNow(): number {
@@ -120,19 +134,52 @@ export class CamHelperClient {
     }
   }
 
+  /** Runs task after the previously queued ones, from a timer (outside any frame callback). */
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const run = () => new Promise<void>((resolve) => setTimeout(resolve, 0)).then(task);
+    const result = this.chain.then(run, run);
+    this.chain = result.catch(() => null);
+    return result;
+  }
+
   /**
    * Queues a POST. It starts from a timer, outside the caller's
    * requestAnimationFrame callback, and after the previously queued ones.
    * sentEpochMs is stamped when the request actually leaves.
    */
   post<T = unknown>(path: string, body: object, opts?: { timeoutMs?: number }): Promise<T | null> {
-    const run = () =>
-      new Promise<void>((resolve) => setTimeout(resolve, 0)).then(() =>
-        this.request<T>('POST', path, { ...body, sentEpochMs: epochNow() }, opts?.timeoutMs),
-      );
-    const result = this.chain.then(run, run);
-    this.chain = result.catch(() => null);
-    return result;
+    return this.enqueue(() => this.request<T>('POST', path, { ...body, sentEpochMs: epochNow() }, opts?.timeoutMs));
+  }
+
+  /**
+   * Measures the clock offset with a few round trips; the sample with the
+   * lowest round-trip time gives the offset (its error is at most half that
+   * round trip). Null when cam-helper does not answer.
+   */
+  async clockSync(rounds = CLOCK_SYNC_ROUNDS): Promise<ClockSync | null> {
+    const samples: ClockSync['samples'] = [];
+    for (let i = 0; i < rounds; i++) {
+      const t0 = epochNow();
+      const res = await this.request<{ serverEpochMs: number }>('POST', '/v1/clock', { browserEpochMs: t0 });
+      const t1 = epochNow();
+      if (!res || typeof res.serverEpochMs !== 'number') break;
+      samples.push({ offsetMs: res.serverEpochMs - (t0 + t1) / 2, rttMs: t1 - t0 });
+    }
+    if (samples.length === 0) return null;
+    const best = samples.reduce((a, b) => (b.rttMs < a.rttMs ? b : a));
+    return { offsetMs: best.offsetMs, rttMs: best.rttMs, samples };
+  }
+
+  /**
+   * Queues a clock sync and then a POST carrying its result as `clock`, so
+   * later queued events (phases) always follow it.
+   */
+  postAfterClockSync<T = unknown>(path: string, body: object): Promise<T | null> {
+    return this.enqueue(async () => {
+      const clock = await this.clockSync();
+      if (!clock) return null; // cam-helper not answering: skip the start request too
+      return this.request<T>('POST', path, { ...body, clock, sentEpochMs: epochNow() });
+    });
   }
 
   status(): Promise<CamHelperStatus | null> {

@@ -99,12 +99,12 @@ export function useCamHelper(pollWhileIdle: boolean, client?: CamHelperClient): 
       if (run.test === 'eyecal') setEyecal(null);
       const request =
         run.test === 'eyecal'
-          ? clientRef.current.post<{ dir: string; recording: string; recordingReason?: string }>('/v1/eyecal/start', {
+          ? clientRef.current.postAfterClockSync<{ dir: string; recording: string; recordingReason?: string }>('/v1/eyecal/start', {
               sessionId: id,
               profile: run.profile,
               points: run.phases.map((p) => ({ label: p.label, angleDeg: p.angleDeg })),
             })
-          : clientRef.current.post<{ dir: string; recording: string; recordingReason?: string }>('/v1/session/start', {
+          : clientRef.current.postAfterClockSync<{ dir: string; recording: string; recordingReason?: string }>('/v1/session/start', {
               sessionId: id,
               test: run.test,
               settings: run.settings,
@@ -191,7 +191,7 @@ export function useCamHelper(pollWhileIdle: boolean, client?: CamHelperClient): 
     const id = sessionIdRef.current;
     switch (startStateRef.current) {
       case 'pending':
-        return true; // session/start not answered yet (it times out after 500 ms)
+        return true; // clock sync and session/start not answered yet (each round times out after 500 ms)
       case 'ok': {
         const st = statusRef.current;
         if (!st) return false; // cam-helper stopped answering

@@ -197,4 +197,5 @@ Uygulama, aynı bilgisayarda çalışan cam-helper ile `http://127.0.0.1:47800` 
 
 - Gaze testi ve kontrol dizisi: geri sayım başında `session/start` (cam-helper göz kamerasını kaydetmeye başlar), her faz başında `phase` (fazın kayıttaki başlangıç zamanı, epoch ms), `pause` / `resume`, bitişte ya da iptalde tam kayıtla `session/end`.
 - Göz kalibrasyonu: `eyecal/start`, `phase`, `pause` / `resume`, `eyecal/end` (yanıt: kalibrasyon sonucu).
+- Saat eşleme: `session/start` ve `eyecal/start` öncesinde 5 gidiş-dönüş (`/v1/clock`) yapılır; en kısa gidiş-dönüşten sayfanın saati (`performance.timeOrigin + performance.now()`, bilgisayar uyuduktan sonra sistem saatinden kayabilir) ile cam-helper saati arasındaki fark bulunur. cam-helper oturumun tüm tarayıcı zamanlarını bu farkla düzeltir ve `tracking_meta.json` içine yazar.
 - Geri sayım sıfırda en fazla 10 s bekler ("Kamera hazırlanıyor"): cam-helper kaydı ve takibi hazır olana kadar. Süre dolarsa test yine başlar ve bitiş ekranı bunu belirtir.

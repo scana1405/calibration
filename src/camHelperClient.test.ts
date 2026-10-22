@@ -111,3 +111,61 @@ describe('CamHelperClient', () => {
     expect(calls[0]).toMatchObject({ url: 'http://127.0.0.1:47800/v1/status', method: 'GET', body: null });
   });
 });
+
+describe('clock sync', () => {
+  // A fake cam-helper whose clock runs 85 ms ahead of this page; its replies
+  // take different, asymmetric times, so only the fastest round trip is precise.
+  function fakeServer(aheadMs: number, delays: [number, number][]) {
+    let i = 0;
+    const paths: string[] = [];
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = url.replace('http://127.0.0.1:47800', '');
+      paths.push(path);
+      bodies.push(init?.body ? JSON.parse(init.body as string) : {});
+      if (path === '/v1/clock') {
+        const [up, down] = delays[i++ % delays.length];
+        await new Promise((r) => setTimeout(r, up));
+        const serverEpochMs = performance.timeOrigin + performance.now() + aheadMs;
+        await new Promise((r) => setTimeout(r, down));
+        return new Response(JSON.stringify({ serverEpochMs }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ dir: '/x', recording: 'starting' }), { status: 200 });
+    });
+    return { fetchImpl, paths, bodies };
+  }
+
+  it('takes the offset from the lowest round trip', async () => {
+    const { fetchImpl } = fakeServer(85, [[30, 2], [2, 2], [5, 40], [1, 1], [20, 20]]);
+    const client = new CamHelperClient('http://127.0.0.1:47800', fetchImpl, 500);
+    const sync = await client.clockSync();
+    expect(sync!.samples).toHaveLength(5);
+    expect(sync!.rttMs).toBe(Math.min(...sync!.samples.map((s) => s.rttMs)));
+    expect(Math.abs(sync!.offsetMs - 85)).toBeLessThan(sync!.rttMs / 2 + 2);
+    // A slow, asymmetric sample alone would have been far off.
+    expect(Math.max(...sync!.samples.map((s) => Math.abs(s.offsetMs - 85)))).toBeGreaterThan(5);
+  });
+
+  it('gives up when cam-helper does not answer', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    const client = new CamHelperClient('http://127.0.0.1:47800', fetchImpl, 100);
+    await expect(client.clockSync()).resolves.toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    await expect(client.postAfterClockSync('/v1/session/start', { sessionId: 's' })).resolves.toBeNull();
+  });
+
+  it('syncs before the start request, which carries the result, and before later events', async () => {
+    const { fetchImpl, paths, bodies } = fakeServer(85, [[1, 1]]);
+    const client = new CamHelperClient('http://127.0.0.1:47800', fetchImpl, 500);
+    const start = client.postAfterClockSync('/v1/session/start', { sessionId: 's', test: 'gaze' });
+    const phase = client.post('/v1/phase', { sessionId: 's', index: 0 });
+    await Promise.all([start, phase]);
+    expect(paths).toEqual([...Array(5).fill('/v1/clock'), '/v1/session/start', '/v1/phase']);
+    const clock = bodies[5].clock as { offsetMs: number; rttMs: number; samples: unknown[] };
+    expect(Math.abs(clock.offsetMs - 85)).toBeLessThan(5);
+    expect(clock.samples).toHaveLength(5);
+    expect(typeof bodies[5].sentEpochMs).toBe('number');
+  });
+});
