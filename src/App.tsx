@@ -18,6 +18,7 @@ import {
   type RunSettings,
   type TestProtocol,
 } from './gazeSequence';
+import { useCamHelper } from './useCamHelper';
 import { useGazeTest } from './useGazeTest';
 import {
   canvasCenter,
@@ -300,7 +301,8 @@ export default function App() {
   const [protocol, setProtocol] = useState<TestProtocol>('gaze');
   const [isFullscreen, setIsFullscreen] = useState(() => document.fullscreenElement !== null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const gaze = useGazeTest(canvasRef, canvas);
+  const camHelper = useCamHelper(mode === 'gaze');
+  const gaze = useGazeTest(canvasRef, canvas, camHelper);
 
   const derived = useMemo(
     () => derive(inputs, canvas, devicePixelRatio, basis, centerState),
@@ -572,6 +574,7 @@ export default function App() {
           result={gaze.result}
           onStart={startGaze}
           onDownload={downloadGazeRecord}
+          camHelper={camHelper}
           onBack={() => {
             gaze.reset();
             setMode('verify');

@@ -252,3 +252,8 @@ button:disabled:hover {
   color: #888;
   font-size: 11px;
 }
+
+.session-dir {
+  font-size: 11px;
+  word-break: break-all;
+}

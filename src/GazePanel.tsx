@@ -10,6 +10,8 @@ import {
   type TestProtocol,
 } from './gazeSequence';
 import type { CalibrationProfile } from './profile';
+import type { CamHelperStatus } from './camHelperClient';
+import type { CamHelperLink } from './useCamHelper';
 import type { GazeStage } from './useGazeTest';
 
 export interface GazePrep {
@@ -35,6 +37,7 @@ interface GazePanelProps {
   onStart: () => void;
   onDownload: () => void;
   onBack: () => void;
+  camHelper: Pick<CamHelperLink, 'status' | 'lastSession'>;
 }
 
 const SETTING_FIELDS: [NumericSettingKey, string][] = [
@@ -89,6 +92,74 @@ function phaseSteps(phases: PlacedPhase[]): { phase: PlacedPhase; startMs: numbe
   return steps;
 }
 
+const TRACKER_STATES: Record<CamHelperStatus['trackerState'], string> = {
+  off: 'kapalı',
+  starting: 'başlıyor',
+  ready: 'hazır',
+  error: 'hata',
+};
+
+const FRAMING: Record<CamHelperStatus['framing'], string> = {
+  ok: 'iyi',
+  edge: 'pupil kenara yakın',
+  noPupil: 'pupil yok',
+};
+
+const EYE_SIDES: Record<string, string> = { right: 'sağ göz', left: 'sol göz', both: 'iki göz' };
+
+/** cam-helper connection, tracker and framing; the test never depends on it. */
+function CamHelperStatusBlock({ status }: { status: CamHelperStatus | null }) {
+  if (!status) {
+    return (
+      <ul className="warnings">
+        <li className="warn">cam-helper bağlı değil, yalnızca uyaran</li>
+      </ul>
+    );
+  }
+  const cam = status.trackedCamera;
+  const problems = [status.fpsError && `Kamera hızı: ${status.fpsError}`, status.trackerError].filter(Boolean);
+  return (
+    <>
+      <dl className="readout">
+        <dt>cam-helper</dt>
+        <dd>bağlı</dd>
+        <dt>Göz kamerası</dt>
+        <dd>{cam ? `${cam.name} (${EYE_SIDES[cam.eyeSide] ?? cam.eyeSide})` : 'yok'}</dd>
+        <dt>İzleyici</dt>
+        <dd>
+          {TRACKER_STATES[status.trackerState]}
+          {status.trackerState === 'ready' && status.fps > 0 && ` · ${formatNumber(status.fps)} fps`}
+        </dd>
+        {status.trackerState === 'ready' && (
+          <>
+            <dt>Çerçeveleme</dt>
+            <dd>
+              {FRAMING[status.framing]} · geçerli %{Math.round(status.validRate1s * 100)}
+            </dd>
+          </>
+        )}
+      </dl>
+      {problems.length > 0 && (
+        <ul className="warnings">
+          {problems.map((p) => (
+            <li key={p as string} className="error">
+              {p}
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
+const RECORDING_STATES: Record<string, string> = {
+  on: 'göz kamerası kaydedildi',
+  attached: 'araç çubuğu kaydına eklendi',
+  starting: 'kayıt başlıyordu',
+  off: 'kayıt yapılmadı',
+  failed: 'kayıt başarısız',
+};
+
 export function GazePanel(props: GazePanelProps) {
   return (
     <aside className="panel">
@@ -123,6 +194,7 @@ function PrepSection({
   warnings,
   notice,
   onStart,
+  camHelper,
 }: GazePanelProps) {
   const { profile, phases, reasons } = prep;
   // The check sequence has fixed durations; only the countdown is adjustable.
@@ -130,6 +202,7 @@ function PrepSection({
   return (
     <section>
       {notice && <p className="status error">{notice}</p>}
+      <CamHelperStatusBlock status={camHelper.status} />
       {protocol === 'check' && (
         <p className="hint">
           Sabit 50 s'lik dizi: bakış konumları, göz kırpma, yavaş izleme, hızlı sakkadlar ve göz kapama. Açılar
@@ -226,7 +299,9 @@ function DoneSection({
   onStart,
   onDownload,
   notice,
+  camHelper,
 }: GazePanelProps & { result: GazeRecord }) {
+  const saved = camHelper.lastSession;
   const last = result.phases[result.phases.length - 1];
   const durationMs = last?.endMs ?? 0;
   return (
@@ -242,7 +317,15 @@ function DoneSection({
         <dd>{result.phases.length}</dd>
         <dt>Duraklatma</dt>
         <dd>{result.pauses.length}</dd>
+        {saved && (
+          <>
+            <dt>cam-helper</dt>
+            <dd>{RECORDING_STATES[saved.recording] ?? saved.recording}</dd>
+          </>
+        )}
       </dl>
+      {saved && <p className="hint session-dir">{saved.dir}</p>}
+      {saved?.reason && <p className="hint">{saved.reason}</p>}
       <div className="buttons">
         <button className="primary" onClick={onDownload}>
           Kaydı indir (JSON)
